@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="pt-br">
+  <head>
+    <meta charset="utf-8" />
+    <title>AULA AO VIVO - ZOOM</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      :root { 
+        --bg1: #022f66; 
+        --bg2: #16a37b; 
+        --card: #ffffff; 
+        --txt: #0c2b3a; 
+        --muted: #6b7680; 
+      }
+      
+      html, body {
+        height: 100%;
+        margin: 0;
+      }
+      
+      body {
+        font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Helvetica, Arial, sans-serif;
+        color: var(--txt);
+        background: linear-gradient(130deg, var(--bg1), var(--bg2)) fixed;
+        display: grid;
+        place-items: center;
+        padding: 20px;
+      }
+      
+      .card {
+        width: min(92vw, 480px);
+        background: var(--card);
+        border-radius: 20px;
+        padding: 40px 32px;
+        box-shadow: 0 30px 60px rgba(0, 0, 0, .25);
+      }
+      
+      h1 {
+        margin: 0 0 8px;
+        font-size: 28px;
+        font-weight: 700;
+        letter-spacing: 0.3px;
+        line-height: 1.2;
+        text-align: center;
+      }
+      
+      p.sub {
+        margin: 0 0 24px;
+        color: var(--muted);
+        font-size: 15px;
+        line-height: 1.5;
+        text-align: center;
+      }
+      
+      label {
+        display: block;
+        font-size: 14px;
+        font-weight: 600;
+        margin: 0 0 8px;
+        color: var(--txt);
+      }
+      
+      .form-group {
+        margin-bottom: 20px;
+      }
+      
+      input {
+        width: 100%;
+        height: 48px;
+        padding: 12px 16px;
+        font-size: 16px;
+        border: 2px solid #d7dee3;
+        border-radius: 12px;
+        outline: none;
+        box-sizing: border-box;
+        transition: all 0.2s ease;
+      }
+      
+      input:focus {
+        border-color: #0e77cc;
+        box-shadow: 0 0 0 4px rgba(14, 119, 204, .12);
+      }
+      
+      input::placeholder {
+        color: #a0aec0;
+      }
+      
+      .btn {
+        width: 100%;
+        height: 52px;
+        border: 0;
+        border-radius: 12px;
+        font-weight: 600;
+        font-size: 16px;
+        cursor: pointer;
+        margin-top: 28px;
+        background: linear-gradient(90deg, #0e77cc, #17a460);
+        color: #fff;
+        transition: transform 0.2s ease, box-shadow 0.2s ease;
+      }
+      
+      .btn:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 8px 20px rgba(14, 119, 204, .3);
+      }
+      
+      .btn:active {
+        transform: translateY(0);
+      }
+      
+      .foot {
+        margin-top: 16px;
+        text-align: center;
+        color: #e6f2ff;
+        font-size: 14px;
+        font-weight: 500;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="card">
+      <h1>AULA AO VIVO</h1>
+      <p class="sub">Insira suas credenciais para acessar a aula.</p>
+
+      <form id="loginForm" novalidate>
+        <div class="form-group">
+          <label for="nome">NOME</label>
+          <input 
+            id="nome" 
+            name="nome" 
+            type="text"
+            autocomplete="name" 
+            placeholder="Insira seu nome completo" 
+            required 
+          />
+        </div>
+
+        <div class="form-group">
+          <label for="cpf">CPF</label>
+          <input 
+            id="cpf"    
+            name="cpf" 
+            inputmode="numeric" 
+            autocomplete="off" 
+            placeholder="000.000.000-00" 
+          />
+        </div>
+
+        <button class="btn" type="submit">Entrar</button>
+      </form>
+    </main>
+
+    <div class="foot">UniFECAF — Seu sonho nossa meta 🚀💙</div>
+
+    <script>
+      // ✅ CONFIGURAR A URL DO SEU BACKEND
+      const API_BASE = "https://checkin-unifecaf-123456.run.app"; // Exemplo
+
+      // Pega URL da reunião (?u=...)
+      const params = new URLSearchParams(location.search);
+      const targetEncoded = params.get("u") || "";
+      const targetUrl = targetEncoded ? decodeURIComponent(targetEncoded) : "";
+
+      function isAllowedTarget(href) {
+        try {
+          const u = new URL(href);
+          const host = (u.hostname || "").toLowerCase();
+          const http = u.protocol === "http:" || u.protocol === "https:";
+          const isMeet = host === "meet.google.com";
+          const isZoom =
+            host === "zoom.us" || host.endsWith(".zoom.us") ||
+            host === "zoom.com" || host.endsWith(".zoom.com") ||
+            host === "zoomgov.com" || host.endsWith(".zoomgov.com");
+
+          const joinPath = /^\/(j|wc\/join|s)\//.test(u.pathname);
+          return http && (isMeet || (isZoom && joinPath));
+        } catch { return false; }
+      }
+
+      const nomeInput = document.getElementById("nome");
+      const cpfInput  = document.getElementById("cpf");
+      const form      = document.getElementById("loginForm");
+
+      // ✅ NOME: permite letras, espaços e acentos
+      nomeInput.addEventListener("input", function(e) {
+        // Remove apenas caracteres perigosos, mantém letras, espaços e acentos
+        e.target.value = e.target.value.replace(/[<>"';{}()\[\]]/g, '');
+      });
+
+      // ✅ CPF: formata enquanto digita
+      function formatCPF(v) {
+        let s = (v || "").replace(/\D/g, "").slice(0, 11);
+        if (s.length > 9)  return s.replace(/(\d{3})(\d{3})(\d{3})(\d{0,2})/, "$1.$2.$3-$4");
+        if (s.length > 6)  return s.replace(/(\d{3})(\d{3})(\d{0,3})/, "$1.$2.$3");
+        if (s.length > 3)  return s.replace(/(\d{3})(\d{0,3})/, "$1.$2");
+        return s;
+      }
+      cpfInput.addEventListener("input", e => e.target.value = formatCPF(e.target.value));
+
+      // Valida CPF
+      function isValidCPFDigits(s) {
+        if (!/^\d{11}$/.test(s) || /^(\d)\1{10}$/.test(s)) return false;
+        const n = s.split("").map(Number);
+        const dv = (arr, f) => {
+          let t = 0; for (let i=0;i<arr.length;i++) t += arr[i]*(f-i);
+          const m = t % 11; return m < 2 ? 0 : 11 - m;
+        };
+        return dv(n.slice(0,9),10) === n[9] && dv(n.slice(0,10),11) === n[10];
+      }
+
+      // Feedback se link inválido
+      if (!targetUrl || !isAllowedTarget(targetUrl)) {
+        console.warn("Link alvo ausente ou não permitido:", targetUrl);
+      }
+
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+
+        const nome = nomeInput.value.trim();
+        const cpf  = cpfInput.value.replace(/\D/g, "");
+
+        // ✅ VALIDAÇÃO CORRETA
+        if (!nome || nome.length < 3) { 
+          alert("Informe seu nome completo."); 
+          nomeInput.focus(); 
+          return; 
+        }
+        
+        if (!targetUrl || !isAllowedTarget(targetUrl)) {
+          alert("Link da reunião inválido ou ausente. Acesse pelo mural/aviso correto.");
+          return;
+        }
+        
+        if (cpf && !isValidCPFDigits(cpf)) {
+          alert("CPF inválido.");
+          cpfInput.focus(); 
+          return;
+        }
+
+        try {
+          const resp = await fetch(`${API_BASE}/checkin`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ nome, cpf, meeting: targetUrl }),
+          });
+          
+          const data = await resp.json();
+
+          if (data && data.ok && data.redirect) {
+            window.location.replace(data.redirect);
+          } else {
+            console.error("Resposta inesperada:", data);
+            alert("Não foi possível realizar o check-in. Tente novamente.");
+          }
+        } catch (err) {
+          console.error(err);
+          alert("Erro de conexão. Tente novamente.");
+        }
+      });
+    </script>
+  </body>
+</html>
