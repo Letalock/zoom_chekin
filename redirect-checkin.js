@@ -1,5 +1,5 @@
 (function () {
-  const GATEWAY = "https://letalock.github.io/aula_zoom?u=";
+  const GATEWAY = "https://letalock.github.io/zoom_chekin?u=";
 
   const isZoomHost = h =>
     h === "zoom.us" || h.endsWith(".zoom.us") ||
