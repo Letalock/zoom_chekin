@@ -141,8 +141,9 @@ async def checkin(req: Request):
         "nome": nome,
         "cpf": cpf or None,
         "link_zoom": meeting_url,
-        "ip": req.client.host if req.client else None
+        "ip": req.client.host if req.client else None,
     }
+
 
     # tenta encaminhar para /token -> /zoom/checkin no mesmo serviço
     base = str(req.base_url)  # ex: http://127.0.0.1:8080/
@@ -179,17 +180,19 @@ async def checkin(req: Request):
         "data_hora": datetime.now(timezone.utc).isoformat(),
         "nome": nome,
         "cpf": cpf or None,
-        "meeting_url": meeting_url,
+        "link_zoom": meeting_url,   # <- nome da coluna IGUAL ao BQ
         "meeting_id": meeting_id or None,
         "ip": req.client.host if req.client else None,
     }
 
-    try:    
-        table_ref = client.dataset(BQ_DATASET).table(BQ_TABLE)
-        errors = client.insert_rows_json(table_ref, [row])
+    try:
+        table_id = f"{BQ_PROJECT}.{BQ_DATASET}.{BQ_TABLE}"
+        errors = client.insert_rows_json(table_id, [row])
         if errors:
-            print(f"Erro BigQuery fallback: {errors}")
+            print("BigQuery insert errors:", errors)
+            return {"ok": False, "error": "BQ insert failed", "details": errors, "row": row}
     except Exception as e:
-        print(f"Exceção BigQuery fallback: {e}")
+        print("Exceção BigQuery fallback:", e)
+        return {"ok": False, "error": "BQ exception", "details": str(e)}
 
     return {"ok": True, "redirect": meeting_url, "fallback_insert": True}
