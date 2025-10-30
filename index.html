@@ -267,6 +267,7 @@
 
         if (!resp.ok) {
           const err = await resp.json().catch(() => ({}));
+          console.error("Check-in falhou:", resp.status, err);
           throw new Error(`Falha no check-in: ${resp.status} ${JSON.stringify(err)}`);
         }
         return resp.json();
