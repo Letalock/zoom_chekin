@@ -351,7 +351,7 @@
         if (btnSubmit) btnSubmit.disabled = true;
 
         try {
-          await enviarCheckin({ nome, cpf, link_zoom, ip, data_hora });
+          await enviarCheckin({ nome, cpf, link_zoom });
           window.location.href = link_zoom; // redireciona para o Zoom
         } catch (err) {
           console.error(err);
