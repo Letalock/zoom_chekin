@@ -176,7 +176,7 @@ async def checkin(req: Request):
 
     # fallback: inserir diretamente (comportamento antigo) caso encaminhamento falhe
     row = {
-        "data_time": datetime.now(timezone.utc).isoformat(),
+        "data_hora": datetime.now(timezone.utc).isoformat(),
         "nome": nome,
         "cpf": cpf or None,
         "meeting_url": meeting_url,
