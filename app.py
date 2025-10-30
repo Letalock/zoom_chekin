@@ -14,8 +14,8 @@ from google.oauth2 import service_account
 # novs importações para proxy interno
 import httpx
 # dotenv.load_dotenv()
-app = FastAPI(title="Check-in UniFECAF", version="1.0.0") 
-servers=[{"url": "/"}]
+app = FastAPI(title="Check-in UniFECAF", version="1.0.0", servers=[{"url": "/"}]) 
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -184,7 +184,7 @@ async def checkin(req: Request):
         "ip": req.client.host if req.client else None,
     }
 
-    try:
+    try:    
         table_ref = client.dataset(BQ_DATASET).table(BQ_TABLE)
         errors = client.insert_rows_json(table_ref, [row])
         if errors:
@@ -193,4 +193,3 @@ async def checkin(req: Request):
         print(f"Exceção BigQuery fallback: {e}")
 
     return {"ok": True, "redirect": meeting_url, "fallback_insert": True}
-
