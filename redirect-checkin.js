@@ -1,7 +1,6 @@
 (function () {
   const GATEWAY = "https://letalock.github.io/zoom_chekin?u=";
 
-  // evita rodar 2x
   if (window.__UFC_CHECKIN_SAFE__) return;
   window.__UFC_CHECKIN_SAFE__ = true;
 
@@ -11,37 +10,35 @@
     h === "zoom.com" || h.endsWith(".zoom.com") ||
     h === "zoomgov.com" || h.endsWith(".zoomgov.com");
 
-  const isJoinPath = p => /^\/(j|wc\/join|s)\//.test(p);
+  const isJoinPath    = p => /^\/(j|wc\/join|s)\//.test(p);
+  // ✅ Novo: rota LTI do Zoom (ex.: /lti/rich/j/88365598174)
+  const isLtiJoinPath = p => /^\/lti\/[^/]+\/j\/\d+/.test(p);
+
   const isMeetHost = h => h === "meet.google.com";
   const isBrightspace = h => /\.brightspace\.com$/i.test(h) || h.includes(".d2l.");
 
-  // parâmetros que o D2L costuma usar para encapsular um link externo
   const PARAM_KEYS = ["targetUrl", "url", "u", "target", "href", "link"];
 
   const toAbs = (h) => { try { return new URL(h, location.href).href; } catch { return null; } };
   const alreadyWrapped = (href) => typeof href === "string" && href.startsWith(GATEWAY);
-
-  function isSkippableScheme(href) {
-    return /^(mailto:|tel:|javascript:|data:|blob:|#)/i.test(href || "");
-  }
+  const isSkippableScheme = (href) => /^(mailto:|tel:|javascript:|data:|blob:|#)/i.test(href || "");
 
   function isEligibleAbsolute(absHref) {
     try {
       const u = new URL(absHref);
       if (!(u.protocol === "http:" || u.protocol === "https:")) return false;
-      const zoom = isZoomHost(u.hostname) && isJoinPath(u.pathname);
+
+      const zoom = isZoomHost(u.hostname) && (isJoinPath(u.pathname) || isLtiJoinPath(u.pathname)); // ✅ inclui LTI
       const meet = isMeetHost(u.hostname);
       return zoom || meet;
     } catch { return false; }
   }
 
-  // tenta extrair um link externo (Zoom/Meet) guardado como parâmetro do D2L
   function extractExternalFromBrightspace(absHref) {
     try {
       const u = new URL(absHref);
       if (!isBrightspace(u.hostname)) return null;
 
-      // 1) parâmetros da query (?url=...)
       for (const k of PARAM_KEYS) {
         const raw = u.searchParams.get(k);
         if (!raw) continue;
@@ -53,10 +50,8 @@
         if (isEligibleAbsolute(t.href)) return t.href;
       }
 
-      // 2) alguns wrappers colocam no fragmento (#u=...)
       if (u.hash && u.hash.length > 1) {
-        const hash = u.hash.slice(1);
-        const hp = new URLSearchParams(hash);
+        const hp = new URLSearchParams(u.hash.slice(1));
         for (const k of PARAM_KEYS) {
           const raw = hp.get(k);
           if (!raw) continue;
@@ -68,12 +63,10 @@
           if (isEligibleAbsolute(t.href)) return t.href;
         }
       }
-
       return null;
     } catch { return null; }
   }
 
-  // decide qual URL (se houver) deve ser enviada ao gateway
   function resolveTargetForWrap(href) {
     if (!href || isSkippableScheme(href)) return null;
     const abs = toAbs(href);
@@ -89,12 +82,9 @@
     } catch { return null; }
   }
 
-  // monta URL do gateway
-  function gatewayFor(targetAbs) {
-    return GATEWAY + encodeURIComponent(targetAbs);
-  }
+  const gatewayFor = (targetAbs) => GATEWAY + encodeURIComponent(targetAbs);
 
-  // ===== Reescrita proativa de anchors (melhora UX em SPA) =====
+  // ===== Reescrita proativa de anchors
   function rewriteAnchors(root) {
     try {
       const scope = root || document;
@@ -105,25 +95,17 @@
         const targetAbs = resolveTargetForWrap(href);
         if (!targetAbs) return;
 
-        // reescreve o href para o gateway (mesma aba, evita popup-blocker)
         a.setAttribute("href", gatewayFor(targetAbs));
-
-        // por padrão mantemos o target original. Se quiser abrir sempre em nova aba:
-        // if (!a.hasAttribute("target")) a.setAttribute("target", "_blank");
-
-        // boas práticas
         const rel = (a.getAttribute("rel") || "");
         if (!/\bnoopener\b/i.test(rel) || !/\bnoreferrer\b/i.test(rel)) {
           a.setAttribute("rel", (rel + " noopener noreferrer").trim());
         }
       });
-    } catch { /* silencioso */ }
+    } catch {}
   }
 
-  // roda de cara e observa mudanças
   rewriteAnchors(document);
-  const mo = new MutationObserver((list) => {
-    // pequena otimização: só reescreve se mudarem href/src ou entrar nó novo
+  const mo = new MutationObserver(list => {
     let should = false;
     for (const m of list) {
       if (m.type === "attributes") { should = true; break; }
@@ -131,14 +113,9 @@
     }
     if (should) rewriteAnchors(document);
   });
-  mo.observe(document.documentElement, {
-    childList: true,
-    subtree: true,
-    attributes: true,
-    attributeFilter: ["href", "src"]
-  });
+  mo.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["href","src"] });
 
-  // ===== Clique: interfere só quando deve envolver =====
+  // ===== Clique (fallback)
   document.addEventListener("click", (evt) => {
     try {
       const path = evt.composedPath ? evt.composedPath() : [];
@@ -157,37 +134,79 @@
 
       const href = a.getAttribute("href");
       if (!href || alreadyWrapped(href) || isSkippableScheme(href)) return;
-
-      // se já foi reescrito (href => gateway), deixa seguir
       if (href.startsWith(GATEWAY)) return;
 
       const targetAbs = resolveTargetForWrap(href);
-      if (!targetAbs) return; // não mexe em cliques normais
+      if (!targetAbs) return;
 
-      // respeita Ctrl/⌘ ou botão do meio => nova aba
       const openNew = evt.ctrlKey || evt.metaKey || evt.button === 1;
-
       evt.preventDefault();
       const url = gatewayFor(targetAbs);
-      if (openNew) {
-        window.open(url, "_blank", "noopener,noreferrer");
-      } else {
-        window.location.href = url; // mesma aba (evita popup-blocker)
-      }
-    } catch { /* silencioso */ }
+      if (openNew) window.open(url, "_blank", "noopener,noreferrer");
+      else window.location.href = url;
+    } catch {}
   }, true);
 
-  // ===== Diagnóstico =====
+  // ===== JOIN INTERCEPTION (window.open / location.*)
+  (function joinInterceptor() {
+    const resolveJoin = (urlLike) => {
+      try {
+        if (!urlLike) return null;
+        const abs = toAbs(String(urlLike));
+        if (!abs) return null;
+
+        const wrapped = resolveTargetForWrap(abs);
+        if (wrapped) return gatewayFor(wrapped);
+
+        if (isEligibleAbsolute(abs)) return gatewayFor(abs);
+        return null;
+      } catch { return null; }
+    };
+
+    try {
+      const _open = window.open;
+      Object.defineProperty(window, "open", {
+        configurable: true,
+        writable: true,
+        value: function (url, name, specs) {
+          try {
+            const gw = resolveJoin(url);
+            if (gw) return _open.call(window, gw, name || "_self", specs);
+          } catch {}
+          return _open.apply(window, arguments);
+        }
+      });
+    } catch {}
+
+    try {
+      const loc = window.location;
+      const _assign  = loc.assign.bind(loc);
+      const _replace = loc.replace.bind(loc);
+
+      loc.assign  = function (url) { const gw = resolveJoin(url); return _assign(gw || url);  };
+      loc.replace = function (url) { const gw = resolveJoin(url); return _replace(gw || url); };
+
+      const desc = Object.getOwnPropertyDescriptor(Location.prototype, "href");
+      if (desc && desc.set) {
+        const _set = desc.set;
+        const _get = desc.get;
+        Object.defineProperty(loc, "href", {
+          configurable: true,
+          get: function() { return _get.call(loc); },
+          set: function(v) { const gw = resolveJoin(v); return _set.call(loc, gw || v); }
+        });
+      }
+    } catch {}
+  })();
+
+  // ===== Diagnóstico
   window.UFC_DIAG_SAFE = () => {
     const anchors = Array.from(document.querySelectorAll('a[href]'));
     const cand = anchors
       .filter(a => !(a.hasAttribute("data-ufc-bypass") || a.classList.contains("ufc-checkin-bypass")))
-      .map(a => {
-        const href = a.getAttribute("href");
-        return { node: a, href, target: resolveTargetForWrap(href) };
-      })
+      .map(a => { const href = a.getAttribute("href"); return { href, target: resolveTargetForWrap(href) }; })
       .filter(x => x.target);
-    console.table(cand.slice(0, 30).map(x => ({ href: x.href, target: x.target })));
+    console.table(cand.slice(0, 30));
     console.info(`Candidatos a wrap: ${cand.length} / Anchors: ${anchors.length}`);
     return cand;
   };
