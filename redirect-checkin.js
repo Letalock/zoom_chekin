@@ -26,6 +26,28 @@
   const alreadyWrapped = (href) => typeof href === "string" && href.startsWith(GATEWAY);
   const isSkippableScheme = (href) => /^(mailto:|tel:|javascript:|data:|blob:|#)/i.test(href || "");
 
+  // 🔧 NOVO: extrai meetingId de qualquer caminho que contenha "/j/123..."
+  function extractMeetingIdFromPath(pathname) {
+    const m = pathname.match(/\/j\/(\d+)/);
+    return m ? m[1] : null;
+  }
+
+  // 🔧 NOVO: normaliza LTI → join direto (https://zoom.us/j/{id})
+  function normalizeZoomLti(absHref) {
+    try {
+      const u = new URL(absHref);
+      if (isZoomApplicationsHost(u.hostname) && isLtiJoinPath(u.pathname)) {
+        const meetingId = extractMeetingIdFromPath(u.pathname);
+        if (meetingId) {
+          return `https://zoom.us/j/${meetingId}`;
+        }
+      }
+      return absHref;
+    } catch {
+      return absHref;
+    }
+  }
+
   function isEligibleAbsolute(absHref) {
     try {
       const u = new URL(absHref);
@@ -75,14 +97,19 @@
 
   function resolveTargetForWrap(href) {
     if (!href || isSkippableScheme(href)) return null;
-    const abs = toAbs(href);
-    if (!abs) return null;
+    const absRaw = toAbs(href);
+    if (!absRaw) return null;
+
+    // 🔧 NOVO: normaliza LTI → join direto antes de validar
+    const abs = normalizeZoomLti(absRaw);
 
     try {
       const u = new URL(abs);
       if (isBrightspace(u.hostname)) {
         const ext = extractExternalFromBrightspace(abs);
-        return ext && isEligibleAbsolute(ext) ? ext : null;
+        // se extraiu, também normaliza caso venha LTI
+        const normalized = ext ? normalizeZoomLti(ext) : null;
+        return normalized && isEligibleAbsolute(normalized) ? normalized : null;
       }
       return isEligibleAbsolute(abs) ? abs : null;
     } catch { return null; }
@@ -122,7 +149,7 @@
   mo.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["href","src"] });
 
   // ===== Clique (fallback)
-  document.addEventListener("click", (evt) => {
+  const clickHandler = (evt) => {
     try {
       const path = evt.composedPath ? evt.composedPath() : [];
       let a = null;
@@ -149,17 +176,24 @@
       evt.preventDefault();
       const url = gatewayFor(targetAbs);
       if (openNew) window.open(url, "_blank", "noopener,noreferrer");
-      else window.location.href = url;
+      else window.location.replace(url);
     } catch {}
-  }, true);
+  };
+
+  document.addEventListener("click", clickHandler, true);
+  // 🔧 NOVO: cobre clique com botão do meio em todos os navegadores
+  document.addEventListener("auxclick", clickHandler, true);
 
   // ===== JOIN INTERCEPTION (window.open / location.*)
   (function joinInterceptor() {
     const resolveJoin = (urlLike) => {
       try {
         if (!urlLike) return null;
-        const abs = toAbs(String(urlLike));
-        if (!abs) return null;
+        const abs0 = toAbs(String(urlLike));
+        if (!abs0) return null;
+
+        // 🔧 NOVO: normaliza LTI também aqui
+        const abs = normalizeZoomLti(abs0);
 
         const wrapped = resolveTargetForWrap(abs);
         if (wrapped) return gatewayFor(wrapped);
