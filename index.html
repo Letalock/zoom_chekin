@@ -391,7 +391,7 @@
             }
           } catch {}
 
-          window.location.href = finalLink; // redireciona para o Zoom
+          window.location.replace(finalLink); // redireciona para o Zoom
         } catch (err) {
           console.error(err);
           alert("Não foi possível realizar o check-in. Tente novamente.");
