@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from urllib.parse import urlparse
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import RedirectResponse, PlainTextResponse  # ✅ NOVO
 from google.cloud import bigquery
 import json 
 from google.oauth2 import service_account
@@ -105,6 +106,19 @@ def extract_meeting_id(url: str) -> str:
         return ""
 
 
+# ✅ NOVO: helper para normalizar link LTI → link público /j/<id>
+def normalize_zoom_lti_to_join(url: str) -> str:
+    try:
+        parsed = urlparse(url)
+        host = (parsed.hostname or "").lower()
+        meeting_id = extract_meeting_id(url)
+        if host == "applications.zoom.us" and meeting_id:
+            return f"https://zoom.us/j/{meeting_id}"
+        return url
+    except:
+        return url
+
+
 @app.get("/")
 async def root():
     """Endpoint raiz"""
@@ -123,6 +137,28 @@ async def health():
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "service": "checkin-api"
     }
+
+
+# ✅ NOVO: proxy para links LTI → redireciona 302 para /j/<id>
+@app.get("/zoom_lti_proxy")
+async def zoom_lti_proxy(meeting_url: str | None = None, u: str | None = None, url: str | None = None):
+    """
+    Uso:
+      /zoom_lti_proxy?meeting_url=<URL LTI ou Zoom/Meet>
+      (aliases aceitos: ?u=... ou ?url=...)
+
+    - Se for applications.zoom.us/lti/.../j/<id> → 302 para https://zoom.us/j/<id>
+    - Se já for um link permitido (Zoom/Meet) → 302 para o próprio link
+    """
+    raw = meeting_url or u or url
+    if not raw:
+        return PlainTextResponse("missing meeting_url", status_code=400)
+
+    if not is_allowed_target(raw):
+        return PlainTextResponse("invalid url", status_code=400)
+
+    target = normalize_zoom_lti_to_join(raw)
+    return RedirectResponse(target, status_code=302)
 
 
 @app.post("/zoom/checkin")
@@ -146,13 +182,7 @@ async def checkin(req: Request):
     meeting_id = extract_meeting_id(meeting_url)
 
     # ✅ Se for LTI, normaliza para link público /j/<id>
-    final_redirect = meeting_url
-    try:
-        host = (urlparse(meeting_url).hostname or "").lower()
-        if host == "applications.zoom.us" and meeting_id:
-            final_redirect = f"https://zoom.us/j/{meeting_id}"
-    except:
-        pass
+    final_redirect = normalize_zoom_lti_to_join(meeting_url)
 
     # Monta payload para encaminhar ao main.py
     forward_payload = {

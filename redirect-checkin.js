@@ -1,6 +1,10 @@
 (function () {
   const GATEWAY = "https://letalock.github.io/zoom_chekin?u=";
 
+  // ⚙️ (opcional, por enquanto NÃO usado)
+  // Se um dia optar por enviar o LTI para o teu backend proxy:
+  // const LTI_PROXY_BASE = "https://SEU_BACKEND/zoom_lti_proxy?meeting_url=";
+
   if (window.__UFC_CHECKIN_SAFE__) return;
   window.__UFC_CHECKIN_SAFE__ = true;
 
@@ -11,10 +15,7 @@
     h === "zoomgov.com" || h.endsWith(".zoomgov.com");
 
   const isJoinPath    = p => /^\/(j|wc\/join|s)\//.test(p);
-  // ✅ rota LTI do Zoom (ex.: /lti/rich/j/88365598174)
   const isLtiJoinPath = p => /^\/lti\/[^/]+\/j\/\d+/.test(p);
-
-  // ✅ NOVO: considerar também o host do Zoom LTI
   const isZoomApplicationsHost = h => h === "applications.zoom.us" || h.endsWith(".applications.zoom.us");
 
   const isMeetHost = h => h === "meet.google.com";
@@ -26,13 +27,12 @@
   const alreadyWrapped = (href) => typeof href === "string" && href.startsWith(GATEWAY);
   const isSkippableScheme = (href) => /^(mailto:|tel:|javascript:|data:|blob:|#)/i.test(href || "");
 
-  // 🔧 NOVO: extrai meetingId de qualquer caminho que contenha "/j/123..."
   function extractMeetingIdFromPath(pathname) {
     const m = pathname.match(/\/j\/(\d+)/);
     return m ? m[1] : null;
   }
 
-  // 🔧 NOVO: normaliza LTI → join direto (https://zoom.us/j/{id})
+  // 🔧 normaliza LTI → join direto (https://zoom.us/j/{id})
   function normalizeZoomLti(absHref) {
     try {
       const u = new URL(absHref);
@@ -41,6 +41,8 @@
         if (meetingId) {
           return `https://zoom.us/j/${meetingId}`;
         }
+        // // (opcional) se quiser usar o proxy quando NÃO conseguir extrair o ID:
+        // return LTI_PROXY_BASE + encodeURIComponent(absHref);
       }
       return absHref;
     } catch {
@@ -52,11 +54,8 @@
     try {
       const u = new URL(absHref);
       if (!(u.protocol === "http:" || u.protocol === "https:")) return false;
-
-      // ✅ AJUSTE: aceitar zoom.us *ou* applications.zoom.us, com caminhos join/LTI
       const zoom = (isZoomHost(u.hostname) || isZoomApplicationsHost(u.hostname))
                 && (isJoinPath(u.pathname) || isLtiJoinPath(u.pathname));
-
       const meet = isMeetHost(u.hostname);
       return zoom || meet;
     } catch { return false; }
@@ -100,14 +99,13 @@
     const absRaw = toAbs(href);
     if (!absRaw) return null;
 
-    // 🔧 NOVO: normaliza LTI → join direto antes de validar
+    // normaliza LTI → join direto antes de validar
     const abs = normalizeZoomLti(absRaw);
 
     try {
       const u = new URL(abs);
       if (isBrightspace(u.hostname)) {
         const ext = extractExternalFromBrightspace(abs);
-        // se extraiu, também normaliza caso venha LTI
         const normalized = ext ? normalizeZoomLti(ext) : null;
         return normalized && isEligibleAbsolute(normalized) ? normalized : null;
       }
@@ -148,7 +146,30 @@
   });
   mo.observe(document.documentElement, { childList: true, subtree: true, attributes: true, attributeFilter: ["href","src"] });
 
-  // ===== Clique (fallback)
+  // Burst curto pós-load
+  let __ufc_burstCount = 0;
+  const __ufc_burst = setInterval(() => {
+    try { rewriteAnchors(document); } catch {}
+    if (++__ufc_burstCount >= 40) clearInterval(__ufc_burst);
+  }, 250);
+
+  // Ao voltar para a aba
+  document.addEventListener("visibilitychange", () => {
+    if (!document.hidden) {
+      try { rewriteAnchors(document); } catch {}
+    }
+  });
+
+  // ===== Clique (fallback) – navegação assíncrona para não “perder a corrida”
+  const asyncNavigate = (url) => {
+    try {
+      queueMicrotask(() => { try { window.location.assign(url); } catch {} });
+    } catch {
+      // Fallback caso queueMicrotask não exista (navegadores antigos)
+      setTimeout(() => { try { window.location.assign(url); } catch {} }, 0);
+    }
+  };
+
   const clickHandler = (evt) => {
     try {
       const path = evt.composedPath ? evt.composedPath() : [];
@@ -176,13 +197,13 @@
       evt.preventDefault();
       const url = gatewayFor(targetAbs);
       if (openNew) window.open(url, "_blank", "noopener,noreferrer");
-      else window.location.replace(url);
+      else asyncNavigate(url);
     } catch {}
   };
 
-  document.addEventListener("click", clickHandler, true);
-  // 🔧 NOVO: cobre clique com botão do meio em todos os navegadores
-  document.addEventListener("auxclick", clickHandler, true);
+  document.addEventListener("click",     clickHandler, true);
+  document.addEventListener("auxclick",  clickHandler, true);
+  document.addEventListener("pointerup", clickHandler, true);
 
   // ===== JOIN INTERCEPTION (window.open / location.*)
   (function joinInterceptor() {
@@ -192,7 +213,6 @@
         const abs0 = toAbs(String(urlLike));
         if (!abs0) return null;
 
-        // 🔧 NOVO: normaliza LTI também aqui
         const abs = normalizeZoomLti(abs0);
 
         const wrapped = resolveTargetForWrap(abs);
@@ -216,6 +236,16 @@
           return _open.apply(window, arguments);
         }
       });
+
+      // keep-alive do hook
+      const __ufc_expected_open = window.open;
+      setInterval(() => {
+        try {
+          if (window.open !== __ufc_expected_open) {
+            window.open = __ufc_expected_open;
+          }
+        } catch {}
+      }, 800);
     } catch {}
 
     try {
@@ -236,6 +266,21 @@
           set: function(v) { const gw = resolveJoin(v); return _set.call(loc, gw || v); }
         });
       }
+
+      // keep-alive dos wrappers de location.*
+      setInterval(() => {
+        try {
+          const l = window.location;
+          if (typeof l.assign === "function" && l.assign.toString().indexOf('resolveJoin') === -1) {
+            const a0 = Location.prototype.assign.bind(l);
+            l.assign = function (url) { const gw = resolveJoin(url); return a0(gw || url); };
+          }
+          if (typeof l.replace === "function" && l.replace.toString().indexOf('resolveJoin') === -1) {
+            const r0 = Location.prototype.replace.bind(l);
+            l.replace = function (url) { const gw = resolveJoin(url); return r0(gw || url); };
+          }
+        } catch {}
+      }, 800);
     } catch {}
   })();
 
