@@ -163,7 +163,7 @@
       @keyframes page-2 { 0%{transform:rotateY(180deg);opacity:0} 20%{opacity:1} 35%,100%{opacity:0} 50%,100%{transform:rotateY(0deg)} }
       @keyframes page-3 { 15%{transform:rotateY(180deg);opacity:0} 35%{opacity:1} 50%,100%{opacity:0} 65%,100%{transform:rotateY(0deg)} }
       @keyframes page-4 { 30%{transform:rotateY(180deg);opacity:0} 50%{opacity:1} 65%,100%{opacity:0} 80%,100%{transform:rotateY(0deg)} }
-      @keyframes page-5 { 45%{transform:rotateY(180deg);opacity:0} 65%{opacity:1} 80%,100%{opacity:0} 95%,100%{transform:rotateY(0deg)} }
+      @keyframes page-5 { 45%{transform:rotateY(180deg);opacity:0} 65%,100%{opacity:1} 80%,100%{opacity:0} 95%,100%{transform:rotateY(0deg)} }
 
       /* overlay que cobre a tela toda */
       .loading-overlay{
@@ -261,8 +261,8 @@
           body: JSON.stringify({
             nome,
             cpf,
-            link_zoom,
-            //ip: (await (await fetch("https://api.ipify.org?format=json")).json()).ip // só pra cumprir o schema atual
+            link_zoom
+            // ip removido do payload por enquanto
           })
         });
 
@@ -279,19 +279,46 @@
       const targetEncoded = params.get("u") || "";
       const link_zoom = targetEncoded ? decodeURIComponent(targetEncoded) : "";
 
+      // ✅ aceitar também applications.zoom.us + rota LTI
       function isAllowedTarget(href) {
         try {
           const u = new URL(href);
           const host = (u.hostname || "").toLowerCase();
           const http = u.protocol === "http:" || u.protocol === "https:";
           const isMeet = host === "meet.google.com";
-          const isZoom =
+
+          const isZoomHost =
             host === "zoom.us" || host.endsWith(".zoom.us") ||
             host === "zoom.com" || host.endsWith(".zoom.com") ||
-            host === "zoomgov.com" || host.endsWith(".zoomgov.com");
-          const joinPath = /^\/(j|wc\/join|s)\//.test(u.pathname);
-          return http && (isMeet || (isZoom && joinPath));
+            host === "zoomgov.com" || host.endsWith(".zoomgov.com") ||
+            host === "applications.zoom.us"; // ✅ novo
+
+          const joinPath =
+            /^\/(j|wc\/join|s)\//.test(u.pathname) ||
+            /^\/lti\/[^/]+\/j\/\d+/.test(u.pathname); // ✅ novo (LTI)
+
+          return http && (isMeet || (isZoomHost && joinPath));
         } catch (e) { return false; }
+      }
+
+      // ✅ extrair meetingId também do LTI
+      function extractMeetingId(url) {
+        try {
+          const u = new URL(url);
+          const host = (u.hostname || "").toLowerCase();
+
+          // /j/123456789
+          let m = u.pathname.match(/\/j\/(\d+)/);
+          if (m) return m[1];
+
+          // /lti/.../j/123456789 (LTI)
+          m = u.pathname.match(/\/lti\/[^/]+\/j\/(\d+)/);
+          if (m) return m[1];
+
+          // meet.google.com/abc-defg-hij
+          if (host === "meet.google.com") return u.pathname.replace(/^\/+/, "");
+          return "";
+        } catch { return ""; }
       }
 
       // ✅ NOME: permite letras, espaços e acentos
@@ -353,7 +380,18 @@
 
         try {
           await enviarCheckin({ nome, cpf, link_zoom });
-          window.location.href = link_zoom; // redireciona para o Zoom
+
+          // ✅ normaliza LTI → link público /j/<id> antes do redirect
+          const meetingId = extractMeetingId(link_zoom);
+          let finalLink = link_zoom;
+          try {
+            const u = new URL(link_zoom);
+            if (u.hostname.toLowerCase() === "applications.zoom.us" && meetingId) {
+              finalLink = `https://zoom.us/j/${meetingId}`;
+            }
+          } catch {}
+
+          window.location.href = finalLink; // redireciona para o Zoom
         } catch (err) {
           console.error(err);
           alert("Não foi possível realizar o check-in. Tente novamente.");

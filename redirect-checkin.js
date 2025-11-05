@@ -11,8 +11,11 @@
     h === "zoomgov.com" || h.endsWith(".zoomgov.com");
 
   const isJoinPath    = p => /^\/(j|wc\/join|s)\//.test(p);
-  // ✅ Novo: rota LTI do Zoom (ex.: /lti/rich/j/88365598174)
+  // ✅ rota LTI do Zoom (ex.: /lti/rich/j/88365598174)
   const isLtiJoinPath = p => /^\/lti\/[^/]+\/j\/\d+/.test(p);
+
+  // ✅ NOVO: considerar também o host do Zoom LTI
+  const isZoomApplicationsHost = h => h === "applications.zoom.us" || h.endsWith(".applications.zoom.us");
 
   const isMeetHost = h => h === "meet.google.com";
   const isBrightspace = h => /\.brightspace\.com$/i.test(h) || h.includes(".d2l.");
@@ -28,7 +31,10 @@
       const u = new URL(absHref);
       if (!(u.protocol === "http:" || u.protocol === "https:")) return false;
 
-      const zoom = isZoomHost(u.hostname) && (isJoinPath(u.pathname) || isLtiJoinPath(u.pathname)); // ✅ inclui LTI
+      // ✅ AJUSTE: aceitar zoom.us *ou* applications.zoom.us, com caminhos join/LTI
+      const zoom = (isZoomHost(u.hostname) || isZoomApplicationsHost(u.hostname))
+                && (isJoinPath(u.pathname) || isLtiJoinPath(u.pathname));
+
       const meet = isMeetHost(u.hostname);
       return zoom || meet;
     } catch { return false; }

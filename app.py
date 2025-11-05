@@ -8,14 +8,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from google.cloud import bigquery
 import json 
 from google.oauth2 import service_account
-# import dotenv 
-##from .main import router as main_router
-
-# novs importações para proxy interno
 import httpx
-# dotenv.load_dotenv()
-app = FastAPI(title="Check-in UniFECAF", version="1.0.0", servers=[{"url": "/"}]) 
 
+app = FastAPI(title="Check-in UniFECAF", version="1.0.0", servers=[{"url": "/"}]) 
 
 app.add_middleware(
     CORSMiddleware,
@@ -29,15 +24,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Inclui o roteador do main.py no aplicativo principal
-##app.include_router(main_router) 
-
 # Configurações
 BQ_PROJECT = os.getenv("BQ_PROJECT", "unifecaf-data") 
 BQ_DATASET = os.getenv("BQ_DATASET", "unifecaf_zoom")
 BQ_TABLE = os.getenv("BQ_TABLE", "ds_checkins")
 
-# credenciais para obter token localmente (ajuste via .env)
 SERVICE_USER = os.getenv("SERVICE_USER", "zoom")
 SERVICE_PASS = os.getenv("SERVICE_PASS")
 credentials_json = os.getenv('GOOGLE_CREDENTIALS_JSON', 'undefined')
@@ -46,57 +37,73 @@ key_dict = json.loads(credentials_json)
 credentials = service_account.Credentials.from_service_account_info(key_dict)
 client = bigquery.Client(project=BQ_PROJECT, credentials=credentials)
 
+
 def sanitize_nome(nome: str) -> str:
     """Limpa nome, mantendo letras, acentos e espaços"""
     nome = re.sub(r"[<>\"';{}()\[\]]", "", nome or "").strip()
     nome = re.sub(r"\s+", " ", nome)
     return nome
 
+
 def sanitize_cpf(cpf: str) -> str:
     """Remove tudo exceto dígitos"""
     return re.sub(r"[^\d]", "", cpf or "").strip()
 
+
 def is_allowed_target(url: str) -> bool:
-    """Valida se é URL do Zoom ou Google Meet"""
+    """Valida se é URL do Zoom (incluindo LTI) ou Google Meet"""
     try:
         u = urlparse(url)
         if u.scheme not in ("http", "https"):
             return False
         host = (u.hostname or "").lower()
-        
+
         # Google Meet
         if host == "meet.google.com":
             return True
-        
-        # Zoom
-        if (host == "zoom.us" or host.endswith(".zoom.us") or
+
+        # Zoom (clássico + LTI)
+        is_zoom_host = (
+            host == "zoom.us" or host.endswith(".zoom.us") or
             host == "zoom.com" or host.endswith(".zoom.com") or
-            host == "zoomgov.com" or host.endswith(".zoomgov.com")):
-            return bool(re.match(r"^\/(j|wc\/join|s)\/", u.path))
-        
-        return False
+            host == "zoomgov.com" or host.endswith(".zoomgov.com") or
+            host == "applications.zoom.us"  # ✅ novo (LTI)
+        )
+
+        join_path = (
+            re.match(r"^/(j|wc/join|s)/", u.path) or
+            re.match(r"^/lti/[^/]+/j/\d+", u.path)  # ✅ novo (LTI)
+        )
+
+        return is_zoom_host and bool(join_path)
     except:
         return False
 
+
 def extract_meeting_id(url: str) -> str:
-    """Extrai Meeting ID da URL"""
+    """Extrai Meeting ID da URL (Zoom clássico, LTI ou Meet)"""
     try:
         parsed = urlparse(url)
         hostname = (parsed.hostname or "").lower()
-        
-        # Zoom: /j/1234567890
-        if "zoom" in hostname:
-            match = re.search(r'/j/(\d+)', parsed.path)
-            if match:
-                return match.group(1)
-        
+
+        # Zoom clássico: /j/1234567890
+        m = re.search(r'/j/(\d+)', parsed.path)
+        if m:
+            return m.group(1)
+
+        # ✅ Zoom LTI: /lti/.../j/1234567890
+        m = re.search(r'/lti/[^/]+/j/(\d+)', parsed.path)
+        if m:
+            return m.group(1)
+
         # Google Meet: /abc-defg-hij
-        elif "meet.google.com" in hostname:
+        if hostname == "meet.google.com":
             return parsed.path.strip('/')
-        
+
         return ""
     except:
         return ""
+
 
 @app.get("/")
 async def root():
@@ -107,6 +114,7 @@ async def root():
         "status": "online"
     }
 
+
 @app.get("/health")
 async def health():
     """Health check para Docker/Kubernetes"""
@@ -115,6 +123,7 @@ async def health():
         "timestamp": datetime.now(timezone.utc).isoformat(),
         "service": "checkin-api"
     }
+
 
 @app.post("/zoom/checkin")
 async def checkin(req: Request):
@@ -136,6 +145,15 @@ async def checkin(req: Request):
 
     meeting_id = extract_meeting_id(meeting_url)
 
+    # ✅ Se for LTI, normaliza para link público /j/<id>
+    final_redirect = meeting_url
+    try:
+        host = (urlparse(meeting_url).hostname or "").lower()
+        if host == "applications.zoom.us" and meeting_id:
+            final_redirect = f"https://zoom.us/j/{meeting_id}"
+    except:
+        pass
+
     # Monta payload para encaminhar ao main.py
     forward_payload = {
         "nome": nome,
@@ -144,9 +162,7 @@ async def checkin(req: Request):
         "ip": req.client.host if req.client else None,
     }
 
-
-    # tenta encaminhar para /token -> /zoom/checkin no mesmo serviço
-    base = str(req.base_url)  # ex: http://127.0.0.1:8080/
+    base = str(req.base_url)
     token_url = base + "token"
     checkin_url = base + "zoom/checkin"
 
@@ -160,27 +176,24 @@ async def checkin(req: Request):
                 # 2) encaminha ao endpoint de inserção
                 resp = await http.post(checkin_url, json=forward_payload, headers=headers)
                 if resp.status_code in (200, 201):
-                    # retorna a resposta do main (preserva dados se houver)
                     try:
                         body = resp.json()
                     except:
                         body = {"ok": True}
-                    # mantém comportamento de redirecionamento para frontend
-                    return {"ok": True, "redirect": meeting_url, "backend": body}
+                    return {"ok": True, "redirect": final_redirect, "backend": body}
                 else:
-                    # log breve e fallback para inserção direta
                     print(f"Forward to /zoom/checkin failed: {resp.status_code} {resp.text}")
             else:
                 print(f"Token request failed: {auth_resp.status_code} {auth_resp.text}")
     except Exception as e:
         print(f"Erro ao encaminhar para /zoom/checkin: {e}")
 
-    # fallback: inserir diretamente (comportamento antigo) caso encaminhamento falhe
+    # fallback: inserir diretamente no BigQuery
     row = {
         "data_hora": datetime.now(timezone.utc).isoformat(),
         "nome": nome,
         "cpf": cpf or None,
-        "link_zoom": meeting_url,   # <- nome da coluna IGUAL ao BQ
+        "link_zoom": meeting_url,
         "meeting_id": meeting_id or None,
         "ip": req.client.host if req.client else None,
     }
@@ -195,4 +208,4 @@ async def checkin(req: Request):
         print("Exceção BigQuery fallback:", e)
         return {"ok": False, "error": "BQ exception", "details": str(e)}
 
-    return {"ok": True, "redirect": meeting_url, "fallback_insert": True}
+    return {"ok": True, "redirect": final_redirect, "fallback_insert": True}
